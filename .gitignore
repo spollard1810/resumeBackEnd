@@ -43,6 +43,7 @@ parsed/
 tobeprocessed/
 resumes/
 dump.rdb
+raw_outputs/
 
 # Temporary files
 *.log
