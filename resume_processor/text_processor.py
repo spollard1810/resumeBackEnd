@@ -128,39 +128,42 @@ class TextProcessor:
     def _parse_llm_response(self, content: str) -> dict:
         """Parse the LLM's response into structured JSON"""
         try:
-            sections = content.split('###')  # Split by markdown headers
+            # Initialize empty structure
             parsed_data = {
                 "personal_info": {},
                 "education": [],
                 "experience": [],
-                "skills": {
-                    "technical": [],
-                    "soft": [],
-                    "languages": [],
-                    "tools": []
-                },
+                "skills": {},
                 "projects": []
             }
 
-            for section in sections:
-                section = section.strip()
-                if not section:
+            # Split content into sections
+            current_section = None
+            current_data = []
+            
+            lines = content.split('\n')
+            for line in lines:
+                line = line.strip()
+                if not line:
                     continue
 
-                # Identify section and parse accordingly
-                if "PERSONAL INFORMATION" in section:
-                    parsed_data["personal_info"] = self._parse_personal_info(section)
-                elif "EDUCATION" in section:
-                    education_items = self._parse_education(section)
-                    parsed_data["education"].extend(education_items)
-                elif "EXPERIENCE" in section:
-                    experience_items = self._parse_experience(section)
-                    parsed_data["experience"].extend(experience_items)
-                elif "SKILLS" in section:
-                    parsed_data["skills"] = self._parse_skills(section)
-                elif "PROJECTS" in section:
-                    project_items = self._parse_projects(section)
-                    parsed_data["projects"].extend(project_items)
+                # Check for main section headers
+                if line.startswith('###'):
+                    # Save previous section if it exists
+                    if current_section and current_data:
+                        parsed_data[current_section.lower()] = self._parse_section(current_section, current_data)
+                    
+                    # Start new section
+                    current_section = line.strip('#').strip().lower()
+                    if "personal" in current_section:
+                        current_section = "personal_info"
+                    current_data = []
+                else:
+                    current_data.append(line)
+
+            # Save the last section
+            if current_section and current_data:
+                parsed_data[current_section.lower()] = self._parse_section(current_section, current_data)
 
             return parsed_data
 
@@ -168,191 +171,65 @@ class TextProcessor:
             self.logger.error(f"Error parsing LLM response: {str(e)}", exc_info=True)
             return None
 
-    def _parse_personal_info(self, section: str) -> dict:
-        """Parse personal information section"""
-        info = {
-            "name": "",
-            "email": "",
-            "phone": "",
-            "location": "",
-            "linkedin": ""
-        }
+    def _parse_section(self, section_name: str, lines: list) -> dict or list:
+        """Parse a section based on its name"""
+        section_name = section_name.lower()
         
-        lines = section.split('\n')
-        for line in lines:
-            line = line.strip('- *')  # Remove markdown formatting
-            if "Full name:" in line:
-                info["name"] = line.split("Full name:")[1].strip().strip('*')
-            elif "Email:" in line:
-                info["email"] = line.split("Email:")[1].strip().strip('*')
-            elif "Phone number:" in line:
-                info["phone"] = line.split("Phone number:")[1].strip().strip('*')
-            elif "Location:" in line:
-                info["location"] = line.split("Location:")[1].strip().strip('*')
-            elif "LinkedIn profile:" in line:
-                info["linkedin"] = line.split("LinkedIn profile:")[1].strip().strip('*')
-        
-        return info
+        if "personal" in section_name:
+            return self._parse_section_items(lines)
+        elif "education" in section_name:
+            return self._parse_section_items(lines)
+        elif "experience" in section_name:
+            return self._parse_section_items(lines)
+        elif "skills" in section_name:
+            return self._parse_section_items(lines)
+        elif "projects" in section_name:
+            return self._parse_section_items(lines)
+        else:
+            # Handle any additional sections
+            return self._parse_section_items(lines)
 
-    def _parse_education(self, section: str) -> list:
-        """Parse education section"""
-        education_items = []
-        current_item = None
+    def _parse_section_items(self, lines: list) -> dict or list:
+        """Parse items within a section"""
+        items = {}
+        current_key = None
         
-        lines = section.split('\n')
         for line in lines:
             line = line.strip()
-            if not line or "EDUCATION" in line:
+            if not line:
                 continue
-            
-            # New institution entry
-            if line.startswith('- **') and 'Title:' not in line and 'Dates:' not in line:
-                if current_item:
-                    education_items.append(current_item)
-                institution = line.strip('- *')
-                current_item = {
-                    "institution": institution,
-                    "location": "",
-                    "degree": "",
-                    "dates": "",
-                    "certifications": []
-                }
                 
-                # Check if location is in the same line
-                if ',' in institution:
-                    inst_parts = institution.split(',')
-                    current_item["institution"] = inst_parts[0].strip()
-                    current_item["location"] = inst_parts[1].strip()
-            
-            # Process details if we have a current item
-            elif current_item and line.strip():
-                line = line.strip('- *')
-                if "Bachelor" in line or "Master" in line or "Degree" in line:
-                    current_item["degree"] = line.strip()
-                elif "Dates:" in line:
-                    current_item["dates"] = line.split("Dates:")[1].strip()
-                elif "CCNA" in line:
-                    cert = {
-                        "name": "CCNA 200-301",
-                        "date": "October 2024"  # This should be extracted from the following line
-                    }
-                    current_item["certifications"].append(cert)
+            # Check if line is a key-value pair
+            if line.startswith('- **') or line.startswith('**'):
+                # Remove markdown formatting
+                line = line.replace('- **', '').replace('**', '')
+                
+                # Split into key-value if possible
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    items[key.strip().lower()] = value.strip()
+                    current_key = key.strip().lower()
+                else:
+                    # Handle cases where the line is just a key
+                    current_key = line.strip().lower()
+                    items[current_key] = []
+            elif line.startswith('- '):
+                # Handle bullet points
+                if current_key and isinstance(items[current_key], list):
+                    items[current_key].append(line.replace('- ', '').strip())
+                else:
+                    # If no current key, add to generic list
+                    if 'items' not in items:
+                        items['items'] = []
+                    items['items'].append(line.replace('- ', '').strip())
+            elif current_key:
+                # Append to current key if it exists
+                if isinstance(items[current_key], list):
+                    items[current_key].append(line)
+                else:
+                    items[current_key] = items[current_key] + " " + line
         
-        if current_item:
-            education_items.append(current_item)
-        
-        return education_items
-
-    def _parse_experience(self, section: str) -> list:
-        """Parse experience section"""
-        experience_items = []
-        current_item = None
-        
-        lines = section.split('\n')
-        for line in lines:
-            line = line.strip()
-            if not line or "EXPERIENCE" in line:
-                continue
-            
-            # New company entry
-            if line.startswith('####'):
-                if current_item:
-                    experience_items.append(current_item)
-                current_item = {
-                    "company": line.strip('# '),
-                    "title": "",
-                    "dates": "",
-                    "location": "",
-                    "achievements": []
-                }
-            
-            # Process details if we have a current item
-            elif current_item:
-                line = line.strip('- *')
-                if line.startswith('Title:'):
-                    current_item["title"] = line.split('Title:')[1].strip()
-                elif line.startswith('Dates:'):
-                    current_item["dates"] = line.split('Dates:')[1].strip()
-                elif line.startswith('Location:'):
-                    current_item["location"] = line.split('Location:')[1].strip()
-                elif line and not any(header in line for header in ['Title:', 'Dates:', 'Location:']):
-                    # This is likely an achievement bullet point
-                    if line.strip() and not line.startswith('**'):
-                        current_item["achievements"].append(line.strip())
-        
-        if current_item:
-            experience_items.append(current_item)
-        
-        return experience_items
-
-    def _parse_skills(self, section: str) -> dict:
-        """Parse skills section"""
-        skills = {
-            "technical": [],
-            "soft": [],
-            "languages": [],
-            "tools": []
-        }
-        
-        current_category = None
-        lines = section.split('\n')
-        for line in lines:
-            line = line.strip('- *')
-            
-            if "Technical skills:" in line:
-                current_category = "technical"
-            elif "Soft skills:" in line:
-                current_category = "soft"
-            elif "Languages:" in line:
-                current_category = "languages"
-                if "Not specified" in line:
-                    skills["languages"] = []
-                    continue
-            elif "Tools:" in line:
-                current_category = "tools"
-            elif line and current_category and ':' not in line:
-                # Clean and split the skills
-                skills_list = line.split(',')
-                skills_list = [skill.strip(' -') for skill in skills_list if skill.strip()]
-                if skills_list:
-                    skills[current_category].extend(skills_list)
-        
-        return skills
-
-    def _parse_projects(self, section: str) -> list:
-        """Parse projects section"""
-        projects = []
-        lines = section.split('\n')
-        
-        # If no projects are listed
-        if any("no explicitly listed projects" in line.lower() for line in lines):
-            return projects
-            
-        current_project = None
-        for line in lines:
-            line = line.strip('- *')
-            if line.startswith('Project:') or line.startswith('Name:'):
-                if current_project:
-                    projects.append(current_project)
-                current_project = {
-                    "name": line.split(':')[1].strip(),
-                    "description": "",
-                    "technologies": [],
-                    "url": ""
-                }
-            elif current_project:
-                if line.startswith('Description:'):
-                    current_project["description"] = line.split(':')[1].strip()
-                elif line.startswith('Technologies:'):
-                    techs = line.split(':')[1].strip()
-                    current_project["technologies"] = [t.strip() for t in techs.split(',')]
-                elif line.startswith('URL:'):
-                    current_project["url"] = line.split(':')[1].strip()
-        
-        if current_project:
-            projects.append(current_project)
-        
-        return projects
+        return items
 
     def process_text(self, text_file: Path):
         """Process the text file and extract structured information"""
@@ -374,13 +251,6 @@ class TextProcessor:
                     
                 self.logger.info(f"Successfully parsed {text_file.name}")
                 
-                # Print improvement suggestions
-                print("\nImprovement Suggestions:")
-                for section, data in parsed_data.items():
-                    if "improvements" in data and data["improvements"]:
-                        print(f"\n{section.upper()}:")
-                        for improvement in data["improvements"]:
-                            print(f"- {improvement}")
             
         except Exception as e:
             self.logger.error(f"Error processing {text_file.name}: {str(e)}", exc_info=True)
